@@ -30,10 +30,12 @@ typedef struct {
 
 typedef struct {
 	Line *lines;
+	int E;
 } Set;
 
 typedef struct {
 	Set *sets;
+	int S;
 } Cache;
 
 int parse_arg(char *arg)
@@ -96,32 +98,23 @@ int build_config(Config *config, Input *input)
 	return 0;
 }
 
-void init_valid_bits(Line *lines, int E)
-{
-	int i;
-	for (i = 0; i < E; ++i)
-		lines[i].valid = 0;
-}
-
-int allocate_lines(Set *sets, int S, int E)
-{
-	int i;
-	for (i = 0; i < S; ++i) {
-		if ((sets[i].lines = (Line *) malloc(E * sizeof(Line))) == NULL)
-			return -1;
-		init_valid_bits(sets[i].lines, E);
-	}
-	return 0;
-}
-
 int allocate_cache(Cache *cache, Config *config)
 {
+	cache->S = config->S;
 	// allocate array of sets
 	if ((cache->sets = (Set *) malloc(config->S * sizeof(Set))) == NULL)
 		return -1;
-	// allocate array of lines for each set
-	if ((allocate_lines(cache->sets, config->S, config->E)) == -1)
-		return -1;
+
+	for (int i = 0; i < config->S; ++i) {
+		// allocate array of lines for each set
+		if ((cache->sets[i].lines = (Line *) malloc(config->E * sizeof(Line))) == NULL)
+			return -1;
+		cache->sets[i].E = config->E;
+		// set valid bits to 0 for each line
+		for (int j = 0; j < config->E; ++j)
+			cache->sets[i].lines[j].valid = 0;
+	}
+
 	return 0;
 }
 
@@ -139,12 +132,11 @@ int main(int argc, char *argv[])
 	Config config;
 	if ((build_config(&config, &input)) == -1) {
 		fprintf(stderr,
-			"%s: error: could not build cache with given parameters.\n",
+			"%s: error: input parameters are invalid.\n",
 			argv[0]);
 		exit(EXIT_FAILURE);
 	}
 
-	// build a Cache. Cache members and submembers will be dynamically allocated.
 	Cache cache;
 	allocate_cache(&cache, &config);
 
