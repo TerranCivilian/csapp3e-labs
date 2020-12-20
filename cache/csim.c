@@ -141,6 +141,15 @@ int allocate_cache(Cache *cache, Config *config)
 	return 0;
 }
 
+void deallocate_cache(Cache *cache)
+{
+	for (int i = 0; i < cache->S; ++i) {
+		free(cache->sets[i].lines);
+		free(cache->sets[i].lru_queue);
+	}
+	free(cache->sets);
+}
+
 int index_of(int *lru_queue, int line)
 {
 	int i = 0;
@@ -281,6 +290,8 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "%s: error: cache simulation failed.\n", argv[0]);
 		exit(EXIT_FAILURE);
 	}
+
+	deallocate_cache(&cache);
 
 	printSummary(result.hits, result.misses, result.evictions);
 	return 0;
