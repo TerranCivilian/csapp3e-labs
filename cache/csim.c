@@ -31,7 +31,7 @@ typedef struct {
 
 typedef struct {
 	int valid;
-	int tag;
+	unsigned long long tag;
 } Line;
 
 typedef struct {
@@ -141,8 +141,21 @@ int allocate_cache(Cache *cache, Config *config)
 	return 0;
 }
 
-void rotate_queue(int *lru_queue, int index, int len)
+int index_of(int *lru_queue, int line)
 {
+	int i = 0;
+	while (*lru_queue != line) {
+		lru_queue++;
+		++i;
+	}
+	return i;
+}
+
+void update_lru_queue(int *lru_queue, int line, int len)
+{
+	int index = index_of(lru_queue, line);
+	if (index == (len-1))
+		return;
 	int tmp = lru_queue[len-1];
 	lru_queue[len-1] = lru_queue[index];
 	while (index < len-2) {
@@ -152,14 +165,14 @@ void rotate_queue(int *lru_queue, int index, int len)
 	lru_queue[len-2] = tmp;
 }
 
-void evict_lru(Set *set, int tag)
+void evict_lru(Set *set, unsigned long long tag)
 {
-	int lru_index = set->lru_queue[0];
-	set->lines[lru_index].tag = tag;
-	rotate_queue(set->lru_queue, lru_index, set->E);
+	int line_index = set->lru_queue[0];
+	set->lines[line_index].tag = tag;
+	update_lru_queue(set->lru_queue, line_index, set->E);
 }
 
-int update(Set *set, int tag)
+int update(Set *set, unsigned long long tag)
 {
 	int added = 0;
 	for (int i = 0; i < set->E; ++i) {
@@ -167,7 +180,7 @@ int update(Set *set, int tag)
 			set->lines[i].valid = 1;
 			set->lines[i].tag = tag;
 			added = 1;
-			rotate_queue(set->lru_queue, i, set->E);
+			update_lru_queue(set->lru_queue, i, set->E);
 			break;
 		}
 	}
@@ -183,13 +196,14 @@ void ref_mem(Cache *cache, unsigned long long address, Result *result)
 	// don't need the b bits
 	address >>= cache->b;
 	int index = address & (pow2(cache->s)-1);
-	int tag = address >> cache->s;
+	unsigned long long tag = address >> cache->s;
 	int hit = 0;
 	for (int i = 0; i < cache->sets[index].E; ++i) {
 		if (cache->sets[index].lines[i].valid &&
                     cache->sets[index].lines[i].tag == tag) {
 			result->hits++;
 			hit = 1;
+			update_lru_queue(cache->sets[index].lru_queue, i, cache->sets[index].E);
 			if (VERBOSE)
 				printf("hit ");
 			break;
