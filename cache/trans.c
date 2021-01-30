@@ -11,6 +11,8 @@
 #include "cachelab.h"
 
 int is_transpose(int M, int N, int A[N][M], int B[M][N]);
+void trans32(int M, int N, int A[N][M], int B[M][N]);
+void trans64(int M, int N, int A[N][M], int B[M][N]);
 
 /* 
  * transpose_submit - This is the solution transpose function that you
@@ -22,6 +24,11 @@ int is_transpose(int M, int N, int A[N][M], int B[M][N]);
 char transpose_submit_desc[] = "Transpose submission";
 void transpose_submit(int M, int N, int A[N][M], int B[M][N])
 {
+	if (M==32 && N==32) {
+		trans32(M, N, A, B);
+	} else if (M==64 && N==64) {
+		trans64(M, N, A, B);
+	}
 }
 
 /* 
@@ -46,6 +53,37 @@ void trans(int M, int N, int A[N][M], int B[M][N])
 
 }
 
+// Called from the submission function for 32x32 matrices
+void trans32(int M, int N, int A[N][M], int B[M][N])
+{
+	int i, j, ii, jj, diag = 0, d_index;
+
+	for (i = 0; i < 32; i += 8) {
+		for (j = 0; j < 32; j += 8) {
+			for (ii = i; ii < i+8; ++ii) {
+				for (jj = j; jj < j+8; ++jj) {
+					if (ii == jj) {
+						diag = 1;
+						d_index = ii;
+					} else {
+						B[jj][ii] = A[ii][jj];
+					}
+				}
+				if (diag) {
+					B[d_index][d_index] = A[d_index][d_index];
+					diag = 0;
+				}
+			}
+		}
+	}
+}
+
+// Called from the submission function for 64x64 matrices
+void trans64(int M, int N, int A[N][M], int B[M][N])
+{
+	// Work in progress
+}
+
 /*
  * registerFunctions - This function registers your transpose
  *     functions with the driver.  At runtime, the driver will
@@ -59,7 +97,7 @@ void registerFunctions()
     registerTransFunction(transpose_submit, transpose_submit_desc); 
 
     /* Register any additional transpose functions */
-    registerTransFunction(trans, trans_desc); 
+    registerTransFunction(trans, trans_desc);
 
 }
 
