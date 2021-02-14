@@ -190,6 +190,7 @@ void eval(char *cmdline)
             }
         }
 
+        sigprocmask(SIG_BLOCK, &mask_all, NULL);
         if (!bg) {
             addjob(jobs, pid, FG, cmdline);
             sigprocmask(SIG_SETMASK, &prev_one, NULL);
@@ -274,6 +275,7 @@ int builtin_cmd(char **argv)
         for (i = 0; i < MAXJOBS; ++i)
             if (jobs[i].state == BG)
                 printf("[%d] (%d) Running %s", jobs[i].jid, (int) jobs[i].pid, jobs[i].cmdline);
+        return 1;
     }
     if (!strcmp(argv[0], "bg"))
         do_bgfg(argv);
@@ -320,14 +322,11 @@ void sigchld_handler(int sig)
     sigfillset(&mask_all);
 
     pid_t pid;
-    while ((pid = waitpid(-1, NULL, 0)) > 0) {
+    if ((pid = waitpid(-1, NULL, WNOHANG | WUNTRACED)) > 0) {
         sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
         deletejob(jobs, pid);
         sigprocmask(SIG_SETMASK, &prev_all, NULL);
     }
-
-    if (errno != ECHILD)
-        if ((write(STDOUT_FILENO, "waitpid error", 14)) < 0)
 
     errno = olderrno;
 
@@ -341,6 +340,12 @@ void sigchld_handler(int sig)
  */
 void sigint_handler(int sig) 
 {
+    pid_t fg_pid;
+    if ((fg_pid = fgpid(jobs))) {
+        kill(-fg_pid, sig);
+        printf("Job [%d] (%d) terminated by signal %d\n", pid2jid(fg_pid), (int) fg_pid, (int) sig);
+        deletejob(jobs, fg_pid);
+    }
     return;
 }
 
