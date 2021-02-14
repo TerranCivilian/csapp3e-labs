@@ -292,6 +292,20 @@ int builtin_cmd(char **argv)
  */
 void do_bgfg(char **argv) 
 {
+    if (argv[1] == NULL) {
+        printf("%s command requires PID or %%jobid argument\n", argv[0]);
+        return;
+    }
+
+    // very feeble attempt to validate bg/fg's argument
+    int i;
+    for (i = 0; i < strlen(argv[1]); ++i) {
+        if (isalpha(argv[1][i])) {
+            printf("%s: argument must be a PID or %%jobid\n", argv[0]);
+            return;
+        }
+    }
+
     int jid_used = 0;
     if (argv[1][0] == '%') { // user denoted job by jid
         jid_used = 1;
@@ -300,7 +314,16 @@ void do_bgfg(char **argv)
 
     int num = atoi(argv[1]);
     int jid = jid_used ? num : pid2jid(num);
-    struct job_t *job = getjobjid(jobs, jid);
+    struct job_t *job;
+    if ((job = getjobjid(jobs, jid)) == NULL) {
+        if (jid_used) {
+            printf("%%%d: No such job\n", num);
+            return;
+        } else {
+            printf("(%d): No such process\n", num);
+            return;
+        }
+    }
     int pid = job->pid;
 
     if (job->state == ST) {
