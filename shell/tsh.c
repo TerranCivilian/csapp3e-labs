@@ -103,16 +103,16 @@ int main(int argc, char **argv)
         switch (c) {
         case 'h':             /* print help message */
             usage();
-	    break;
+            break;
         case 'v':             /* emit additional diagnostic info */
             verbose = 1;
-	    break;
+            break;
         case 'p':             /* don't print a prompt */
             emit_prompt = 0;  /* handy for automatic testing */
-	    break;
-	default:
+            break;
+        default:
             usage();
-	}
+        }
     }
 
     /* Install the signal handlers */
@@ -165,6 +165,42 @@ int main(int argc, char **argv)
 */
 void eval(char *cmdline) 
 {
+    char buf[MAXLINE];
+    strcpy(buf, cmdline);
+
+    char *argv[MAXARGS];
+    int bg = parseline(buf, argv);
+    if (argv[0] == NULL)
+        return;
+
+    sigset_t mask_all, mask_one, prev_one;
+    sigfillset(&mask_all);
+    sigemptyset(&mask_one);
+    sigaddset(&mask_one, SIGCHLD);
+
+    if (!builtin_cmd(argv)) {
+        sigprocmask(SIG_BLOCK, &mask_one, &prev_one);
+        pid_t pid;
+        if ((pid = fork()) == 0) {
+            setpgid(0, 0);
+            sigprocmask(SIG_SETMASK, &prev_one, NULL);
+            if (execve(argv[0], argv, environ) < 0) {
+                printf("%s: Command not found.\n", argv[0]);
+                exit(0);
+            }
+        }
+
+        if (!bg) {
+            addjob(jobs, pid, FG, cmdline);
+            sigprocmask(SIG_SETMASK, &prev_one, NULL);
+            waitfg(pid);
+        } else {
+            addjob(jobs, pid, BG, cmdline);
+            sigprocmask(SIG_SETMASK, &prev_one, NULL);
+            printf("[%d] (%d) %s", pid2jid(pid), (int) pid, cmdline);
+        }
+    }
+
     return;
 }
 
@@ -231,6 +267,20 @@ int parseline(const char *cmdline, char **argv)
  */
 int builtin_cmd(char **argv) 
 {
+    if (!strcmp(argv[0], "quit"))
+        exit(0);
+    if (!strcmp(argv[0], "jobs")) {
+        int i;
+        for (i = 0; i < MAXJOBS; ++i)
+            if (jobs[i].state == BG)
+                printf("[%d] (%d) Running %s", jobs[i].jid, (int) jobs[i].pid, jobs[i].cmdline);
+    }
+    if (!strcmp(argv[0], "bg"))
+        do_bgfg(argv);
+    if (!strcmp(argv[0], "fg"))
+        do_bgfg(argv);
+    if (!strcmp(argv[0], "&"))
+        return 1;
     return 0;     /* not a builtin command */
 }
 
@@ -247,6 +297,8 @@ void do_bgfg(char **argv)
  */
 void waitfg(pid_t pid)
 {
+    while (getjobpid(jobs, pid) != NULL)
+        sleep(1);
     return;
 }
 
@@ -263,6 +315,22 @@ void waitfg(pid_t pid)
  */
 void sigchld_handler(int sig) 
 {
+    int olderrno = errno;
+    sigset_t mask_all, prev_all;
+    sigfillset(&mask_all);
+
+    pid_t pid;
+    while ((pid = waitpid(-1, NULL, 0)) > 0) {
+        sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
+        deletejob(jobs, pid);
+        sigprocmask(SIG_SETMASK, &prev_all, NULL);
+    }
+
+    if (errno != ECHILD)
+        if ((write(STDOUT_FILENO, "waitpid error", 14)) < 0)
+
+    errno = olderrno;
+
     return;
 }
 
