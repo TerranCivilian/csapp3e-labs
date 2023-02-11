@@ -173,6 +173,7 @@ void *coalesce(void *bp) {
     size_t size = GET_SIZE(HDRP(bp));
 
     if (prev_alloc && next_alloc) {
+        add_to_free_list(bp);
         return bp;
     } else if (prev_alloc && !next_alloc) {
         // remove next contiguous block from free list
@@ -202,6 +203,8 @@ void *coalesce(void *bp) {
         bp = PREV_BLKP(bp);
     }
 
+    add_to_free_list(bp);
+
     return bp;
 }
 
@@ -229,8 +232,7 @@ void mm_free(void *bp) {
     size_t size = GET_SIZE(HDRP(bp));
     PUT(HDRP(bp), PACK(size, 0));
     PUT(FTRP(bp), PACK(size, 0));
-    bp = coalesce(bp);
-    add_to_free_list(bp);
+    coalesce(bp);
 }
 
 /*
@@ -274,7 +276,6 @@ void *extend_heap(size_t words) {
     PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1));
 
     bp = coalesce(bp);
-    add_to_free_list(bp);
     return bp;
 }
 
