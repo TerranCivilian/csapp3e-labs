@@ -79,7 +79,8 @@ void add_to_free_list(void *bp);
 void remove_from_free_list(void *bp);
 void *extend_heap(size_t words);
 void place(void *bp, size_t asize);
-int mm_check();
+int mm_check(void);
+void print_free_list(void);
 
 /* 
  * mm_init - initialize the malloc package.
@@ -228,7 +229,7 @@ void mm_free(void *bp) {
     size_t size = GET_SIZE(HDRP(bp));
     PUT(HDRP(bp), PACK(size, 0));
     PUT(FTRP(bp), PACK(size, 0));
-    coalesce(bp);
+    bp = coalesce(bp);
     add_to_free_list(bp);
 }
 
@@ -275,4 +276,15 @@ void *extend_heap(size_t words) {
     bp = coalesce(bp);
     add_to_free_list(bp);
     return bp;
+}
+
+// utility function to call in gdb
+void print_free_list() {
+    void *start = free_list_start;
+    while (start) {
+        printf("free block %p %d %d\n", start, GET_SIZE(HDRP(start)), GET_ALLOC(HDRP(start)));
+        printf("pred:      %p\n", PRED_BLKP(start));
+        printf("succ       %p\n\n", SUCC_BLKP(start));
+        start = SUCC_BLKP(start);
+    }
 }
