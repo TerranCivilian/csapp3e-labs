@@ -2,7 +2,7 @@
 # Makefile for the Malloc Lab
 #
 CC = gcc
-CFLAGS = -Wall -Og -m32 -g3 -Wno-unused-result
+CFLAGS = -Wall -Og -m32 -gdwarf-2 -g3 -Wno-unused-result -Wno-unused-function
 
 OBJS = mdriver.o mm.o memlib.o fsecs.o fcyc.o clock.o ftimer.o
 

@@ -79,8 +79,8 @@ void add_to_free_list(void *bp);
 void remove_from_free_list(void *bp);
 void *extend_heap(size_t words);
 void place(void *bp, size_t asize);
-int mm_check(void);
-void print_free_list(void);
+static void print_free_list(void);
+static int mm_check(void);
 
 /* 
  * mm_init - initialize the malloc package.
@@ -115,6 +115,7 @@ void *mm_malloc(size_t size) {
     char *bp;
     if ((bp = find_fit(asize)) != NULL) {
         place(bp, asize);
+        mm_check();
         return bp;
     }
 
@@ -123,6 +124,7 @@ void *mm_malloc(size_t size) {
         return NULL;
     place(bp, asize);
 
+    mm_check();
     return bp;
 }
 
@@ -233,6 +235,7 @@ void mm_free(void *bp) {
     PUT(HDRP(bp), PACK(size, 0));
     PUT(FTRP(bp), PACK(size, 0));
     coalesce(bp);
+    mm_check();
 }
 
 /*
@@ -280,7 +283,7 @@ void *extend_heap(size_t words) {
 }
 
 // utility function to call in gdb
-void print_free_list() {
+static void print_free_list() {
     void *start = free_list_start;
     while (start) {
         printf("free block %p %d %d\n", start, GET_SIZE(HDRP(start)), GET_ALLOC(HDRP(start)));
@@ -288,4 +291,80 @@ void print_free_list() {
         printf("succ       %p\n\n", SUCC_BLKP(start));
         start = SUCC_BLKP(start);
     }
+}
+
+// check that every block in the free block list is marked as free and that each block only points to other free blocks
+static void free_list_blocks_marked_free() {
+    void *iter = free_list_start;
+    while (iter) {
+        if (GET_ALLOC(HDRP(iter)) != 0 || GET_ALLOC(FTRP(iter)) != 0) {
+            fprintf(stderr, "block ptr %p in free list is not marked free\n", iter);
+        }
+
+        // make sure this free block points to other free blocks
+        void *pred = PRED_BLKP(iter);
+        void *succ = SUCC_BLKP(iter);
+        if (pred && (GET_ALLOC(HDRP(pred)) != 0 || GET_ALLOC(FTRP(pred)) != 0))
+            fprintf(stderr, "block ptr %p's PRED ptr points to block not marked as free: %p\n", iter, pred);
+        if (succ && (GET_ALLOC(HDRP(succ)) != 0 || GET_ALLOC(FTRP(succ)) != 0))
+            fprintf(stderr, "block ptr %p's SUCC ptr points to block not marked as free: %p\n", iter, succ);
+
+        iter = SUCC_BLKP(iter);
+    }
+}
+
+// make sure there are no contiguous free blocks
+static void contiguous_free_blocks_coalesced() {
+    void *iter = NEXT_BLKP(heap_listp);
+    while (GET_SIZE(HDRP(iter)) != 0) {
+        if (GET_ALLOC(HDRP(iter)) == 0 && GET_ALLOC(HDRP(NEXT_BLKP(iter))) == 0) {
+            fprintf(stderr, "block ptrs %p and %p should be coalesced\n", iter, NEXT_BLKP(iter));
+        }
+        iter = NEXT_BLKP(iter);
+    }
+}
+
+// verify that bp is in the free block list
+static int find_block_in_free_list(void *bp) {
+    void *iter = free_list_start;
+    while (iter) {
+        if (iter == bp) {
+            return 0;
+        }
+        iter = SUCC_BLKP(iter);
+    }
+    return -1;
+}
+
+// verify that all free blocks on the heap are in the free block list
+static void all_free_blocks_in_free_list() {
+    void *iter = NEXT_BLKP(heap_listp);
+    while (GET_SIZE(HDRP(iter)) != 0) {
+        if (GET_ALLOC(HDRP(iter)) == 0 && find_block_in_free_list(iter) == -1) {
+            fprintf(stderr, "block ptr %p is marked free but is not in free list\n", iter);
+        }
+        iter = NEXT_BLKP(iter);
+    }
+}
+
+// verify that every block is completely within heap address range
+static void check_ptrs_valid_heap_address() {
+    void *heap_lo = mem_heap_lo();
+    void *heap_hi = mem_heap_hi();
+
+    void *iter = heap_listp;
+    while (GET_SIZE(HDRP(iter)) != 0) {
+        if ((void *)HDRP(iter) < heap_lo || (void *)HDRP(iter) > heap_hi || (void *)FTRP(iter) < heap_lo || (void *)FTRP(iter) > heap_hi) {
+            fprintf(stderr, "block at ptr %p is not fully within heap bounds\n", iter);
+        }
+        iter = NEXT_BLKP(iter);
+    }
+}
+
+static int mm_check() {
+    free_list_blocks_marked_free();
+    contiguous_free_blocks_coalesced();
+    all_free_blocks_in_free_list();
+    check_ptrs_valid_heap_address();
+    return 0;
 }
