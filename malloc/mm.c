@@ -116,7 +116,6 @@ void *mm_malloc(size_t size) {
     char *bp;
     if ((bp = find_fit(asize)) != NULL) {
         place(bp, asize);
-        mm_check();
         return bp;
     }
 
@@ -125,7 +124,6 @@ void *mm_malloc(size_t size) {
         return NULL;
     place(bp, asize);
 
-    mm_check();
     return bp;
 }
 
@@ -236,7 +234,6 @@ void mm_free(void *bp) {
     PUT(HDRP(bp), PACK(size, 0));
     PUT(FTRP(bp), PACK(size, 0));
     coalesce(bp);
-    mm_check();
 }
 
 /*
@@ -353,7 +350,7 @@ void *mm_realloc(void *ptr, size_t size) {
     if (free_ptr) {
         mm_free(ptr);
     }
-    mm_check();
+
     return new_ptr;
 }
 
