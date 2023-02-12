@@ -1,13 +1,8 @@
 /*
- * mm-naive.c - The fastest, least memory-efficient malloc package.
+ * mm.c
  * 
- * In this naive approach, a block is allocated by simply incrementing
- * the brk pointer.  A block is pure payload. There are no headers or
- * footers.  Blocks are never coalesced or reused. Realloc is
- * implemented directly using mm_malloc and mm_free.
- *
- * NOTE TO STUDENTS: Replace this header comment with your own header
- * comment that gives a high level description of your solution.
+ * This malloc package uses an 'explicit free list' implementation with a LIFO 
+ * free list and first-fit placement policy.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -57,35 +52,19 @@
 /* rounds up to the nearest multiple of ALIGNMENT */
 #define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~0x7)
 
-#define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
-
-
-
-team_t team = {
-    "ateam",
-    "Harry Bovik",
-    "bovik@cs.cmu.edu",
-    "",
-    ""
-};
-
-
-
-
 static void *free_list_start;
 static void *heap_listp;
 
-void *find_fit(size_t asize);
-void add_to_free_list(void *bp);
-void remove_from_free_list(void *bp);
-void *extend_heap(size_t words);
-void place(void *bp, size_t asize);
+static void *extend_heap(size_t words);
+static void *find_fit(size_t asize);
+static void place(void *bp, size_t asize);
+static void *coalesce(void *bp);
+static void add_to_free_list(void *bp);
+static void remove_from_free_list(void *bp);
 static void print_free_list(void);
 static int mm_check(void);
 
-/* 
- * mm_init - initialize the malloc package.
- */
+// setup initial free block
 int mm_init(void) {
     free_list_start = NULL;
 
@@ -103,10 +82,7 @@ int mm_init(void) {
     return 0;
 }
 
-/* 
- * mm_malloc - Allocate a block by incrementing the brk pointer.
- *     Always allocate a block whose size is a multiple of the alignment.
- */
+// place new allocation in an available free block or new heap memory if needed
 void *mm_malloc(size_t size) {
     if (size == 0)
         return NULL;
@@ -127,108 +103,7 @@ void *mm_malloc(size_t size) {
     return bp;
 }
 
-void *find_fit(size_t asize) {
-    void *iter = free_list_start;
-    while (iter) {
-        if (GET_SIZE(HDRP(iter)) >= asize)
-            return iter;
-        iter = SUCC_BLKP(iter);
-    }
-    return NULL;
-}
-
-void place(void *bp, size_t asize) {
-    size_t bsize = GET_SIZE(HDRP(bp));
-    if (bsize - asize >= MIN_B_SIZE) { // split
-        void *prev_free_block = PRED_BLKP(bp);
-        void *next_free_block = SUCC_BLKP(bp);
-
-        PUT(HDRP(bp), PACK(asize, 1));
-        PUT(FTRP(bp), PACK(asize, 1));
-
-        size_t new_bsize = bsize - asize;
-        void *new_bp = NEXT_BLKP(bp);
-        PUT(HDRP(new_bp), PACK(new_bsize, 0));
-        PUT(FTRP(new_bp), PACK(new_bsize, 0));
-        PUTP(PRED_P(new_bp), prev_free_block);
-        PUTP(SUCC_P(new_bp), next_free_block);
-        if (next_free_block) {
-            PUTP(PRED_P(next_free_block), new_bp);
-        }
-
-        if (prev_free_block) {
-            PUTP(SUCC_P(prev_free_block), new_bp);
-        } else {
-            free_list_start = new_bp;
-        }
-    } else { // use whole block
-        remove_from_free_list(bp);
-        PUT(HDRP(bp), PACK(bsize, 1));
-        PUT(FTRP(bp), PACK(bsize, 1));
-    }
-}
-
-void *coalesce(void *bp) {
-    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
-    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
-    size_t size = GET_SIZE(HDRP(bp));
-
-    if (prev_alloc && next_alloc) {
-        add_to_free_list(bp);
-        return bp;
-    } else if (prev_alloc && !next_alloc) {
-        // remove next contiguous block from free list
-        remove_from_free_list(NEXT_BLKP(bp));
-
-        size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
-        PUT(HDRP(bp), PACK(size, 0));
-        PUT(FTRP(bp), PACK(size, 0));
-    } else if (!prev_alloc && next_alloc) {
-        // remove previous contiguous block from free list
-        remove_from_free_list(PREV_BLKP(bp));
-
-        size += GET_SIZE(HDRP(PREV_BLKP(bp)));
-        PUT(FTRP(bp), PACK(size, 0));
-        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-        bp = PREV_BLKP(bp);
-    } else {
-        // remove next contiguous block from free list
-        remove_from_free_list(NEXT_BLKP(bp));
-
-        // remove previous contiguous block from free list
-        remove_from_free_list(PREV_BLKP(bp));
-
-        size += GET_SIZE(HDRP(PREV_BLKP(bp))) + GET_SIZE(FTRP(NEXT_BLKP(bp)));
-        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-        PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
-        bp = PREV_BLKP(bp);
-    }
-
-    add_to_free_list(bp);
-
-    return bp;
-}
-
-void remove_from_free_list(void *bp) {
-    void *next_free_bp = SUCC_BLKP(bp);
-    void *prev_free_bp = PRED_BLKP(bp);
-    if (prev_free_bp) {
-        PUTP(SUCC_P(prev_free_bp), next_free_bp);
-    }
-    if (next_free_bp) {
-        PUTP(PRED_P(next_free_bp), prev_free_bp);
-        if (prev_free_bp == NULL) {
-            free_list_start = next_free_bp;
-        }
-    }
-    if (!prev_free_bp && !next_free_bp) {
-        free_list_start = NULL;
-    }
-}
-
-/*
- * mm_free - Freeing a block does nothing.
- */
+// mm_free is constant time; place new free block at the beginning of the free list
 void mm_free(void *bp) {
     size_t size = GET_SIZE(HDRP(bp));
     PUT(HDRP(bp), PACK(size, 0));
@@ -236,9 +111,7 @@ void mm_free(void *bp) {
     coalesce(bp);
 }
 
-/*
- * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
- */
+// convoluted mess at the moment. uses space from adjacent free blocks if available
 void *mm_realloc(void *ptr, size_t size) {
     if (!ptr) {
         return mm_malloc(size);
@@ -354,16 +227,7 @@ void *mm_realloc(void *ptr, size_t size) {
     return new_ptr;
 }
 
-void add_to_free_list(void *bp) {
-    PUTP(SUCC_P(bp), free_list_start);
-    PUTP(PRED_P(bp), NULL);
-    if (free_list_start) {
-        PUTP(PRED_P(free_list_start), bp);
-    }
-    free_list_start = bp;
-}
-
-void *extend_heap(size_t words) {
+static void *extend_heap(size_t words) {
     char *bp;
     size_t size;
 
@@ -379,6 +243,115 @@ void *extend_heap(size_t words) {
     return bp;
 }
 
+// first-fit policy
+static void *find_fit(size_t asize) {
+    void *iter = free_list_start;
+    while (iter) {
+        if (GET_SIZE(HDRP(iter)) >= asize)
+            return iter;
+        iter = SUCC_BLKP(iter);
+    }
+    return NULL;
+}
+
+static void place(void *bp, size_t asize) {
+    size_t bsize = GET_SIZE(HDRP(bp));
+    if (bsize - asize >= MIN_B_SIZE) { // split
+        void *prev_free_block = PRED_BLKP(bp);
+        void *next_free_block = SUCC_BLKP(bp);
+
+        PUT(HDRP(bp), PACK(asize, 1));
+        PUT(FTRP(bp), PACK(asize, 1));
+
+        size_t new_bsize = bsize - asize;
+        void *new_bp = NEXT_BLKP(bp);
+        PUT(HDRP(new_bp), PACK(new_bsize, 0));
+        PUT(FTRP(new_bp), PACK(new_bsize, 0));
+        PUTP(PRED_P(new_bp), prev_free_block);
+        PUTP(SUCC_P(new_bp), next_free_block);
+        if (next_free_block) {
+            PUTP(PRED_P(next_free_block), new_bp);
+        }
+
+        if (prev_free_block) {
+            PUTP(SUCC_P(prev_free_block), new_bp);
+        } else {
+            free_list_start = new_bp;
+        }
+    } else { // use whole block
+        remove_from_free_list(bp);
+        PUT(HDRP(bp), PACK(bsize, 1));
+        PUT(FTRP(bp), PACK(bsize, 1));
+    }
+}
+
+static void *coalesce(void *bp) {
+    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
+    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
+    size_t size = GET_SIZE(HDRP(bp));
+
+    if (prev_alloc && next_alloc) {
+        add_to_free_list(bp);
+        return bp;
+    } else if (prev_alloc && !next_alloc) {
+        // remove next contiguous block from free list
+        remove_from_free_list(NEXT_BLKP(bp));
+
+        size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
+        PUT(HDRP(bp), PACK(size, 0));
+        PUT(FTRP(bp), PACK(size, 0));
+    } else if (!prev_alloc && next_alloc) {
+        // remove previous contiguous block from free list
+        remove_from_free_list(PREV_BLKP(bp));
+
+        size += GET_SIZE(HDRP(PREV_BLKP(bp)));
+        PUT(FTRP(bp), PACK(size, 0));
+        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
+        bp = PREV_BLKP(bp);
+    } else {
+        // remove next contiguous block from free list
+        remove_from_free_list(NEXT_BLKP(bp));
+
+        // remove previous contiguous block from free list
+        remove_from_free_list(PREV_BLKP(bp));
+
+        size += GET_SIZE(HDRP(PREV_BLKP(bp))) + GET_SIZE(FTRP(NEXT_BLKP(bp)));
+        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
+        PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
+        bp = PREV_BLKP(bp);
+    }
+
+    add_to_free_list(bp);
+
+    return bp;
+}
+
+static void add_to_free_list(void *bp) {
+    PUTP(SUCC_P(bp), free_list_start);
+    PUTP(PRED_P(bp), NULL);
+    if (free_list_start) {
+        PUTP(PRED_P(free_list_start), bp);
+    }
+    free_list_start = bp;
+}
+
+static void remove_from_free_list(void *bp) {
+    void *next_free_bp = SUCC_BLKP(bp);
+    void *prev_free_bp = PRED_BLKP(bp);
+    if (prev_free_bp) {
+        PUTP(SUCC_P(prev_free_bp), next_free_bp);
+    }
+    if (next_free_bp) {
+        PUTP(PRED_P(next_free_bp), prev_free_bp);
+        if (prev_free_bp == NULL) {
+            free_list_start = next_free_bp;
+        }
+    }
+    if (!prev_free_bp && !next_free_bp) {
+        free_list_start = NULL;
+    }
+}
+
 // utility function to call in gdb
 static void print_free_list() {
     void *start = free_list_start;
@@ -391,34 +364,42 @@ static void print_free_list() {
 }
 
 // check that every block in the free block list is marked as free and that each block only points to other free blocks
-static void free_list_blocks_marked_free() {
+static int free_list_blocks_marked_free() {
     void *iter = free_list_start;
     while (iter) {
         if (GET_ALLOC(HDRP(iter)) != 0 || GET_ALLOC(FTRP(iter)) != 0) {
             fprintf(stderr, "block ptr %p in free list is not marked free\n", iter);
+            return -1;
         }
 
         // make sure this free block points to other free blocks
         void *pred = PRED_BLKP(iter);
         void *succ = SUCC_BLKP(iter);
-        if (pred && (GET_ALLOC(HDRP(pred)) != 0 || GET_ALLOC(FTRP(pred)) != 0))
+        if (pred && (GET_ALLOC(HDRP(pred)) != 0 || GET_ALLOC(FTRP(pred)) != 0)) {
             fprintf(stderr, "block ptr %p's PRED ptr points to block not marked as free: %p\n", iter, pred);
-        if (succ && (GET_ALLOC(HDRP(succ)) != 0 || GET_ALLOC(FTRP(succ)) != 0))
+            return -1;
+        }
+        if (succ && (GET_ALLOC(HDRP(succ)) != 0 || GET_ALLOC(FTRP(succ)) != 0)) {
             fprintf(stderr, "block ptr %p's SUCC ptr points to block not marked as free: %p\n", iter, succ);
+            return -1;
+        }
 
         iter = SUCC_BLKP(iter);
     }
+    return 0;
 }
 
 // make sure there are no contiguous free blocks
-static void contiguous_free_blocks_coalesced() {
+static int contiguous_free_blocks_coalesced() {
     void *iter = NEXT_BLKP(heap_listp);
     while (GET_SIZE(HDRP(iter)) != 0) {
         if (GET_ALLOC(HDRP(iter)) == 0 && GET_ALLOC(HDRP(NEXT_BLKP(iter))) == 0) {
             fprintf(stderr, "block ptrs %p and %p should be coalesced\n", iter, NEXT_BLKP(iter));
+            return -1;
         }
         iter = NEXT_BLKP(iter);
     }
+    return 0;
 }
 
 // verify that bp is in the free block list
@@ -434,18 +415,20 @@ static int find_block_in_free_list(void *bp) {
 }
 
 // verify that all free blocks on the heap are in the free block list
-static void all_free_blocks_in_free_list() {
+static int all_free_blocks_in_free_list() {
     void *iter = NEXT_BLKP(heap_listp);
     while (GET_SIZE(HDRP(iter)) != 0) {
         if (GET_ALLOC(HDRP(iter)) == 0 && find_block_in_free_list(iter) == -1) {
             fprintf(stderr, "block ptr %p is marked free but is not in free list\n", iter);
+            return -1;
         }
         iter = NEXT_BLKP(iter);
     }
+    return 0;
 }
 
 // verify that every block is completely within heap address range
-static void check_ptrs_valid_heap_address() {
+static int check_ptrs_valid_heap_address() {
     void *heap_lo = mem_heap_lo();
     void *heap_hi = mem_heap_hi();
 
@@ -453,15 +436,17 @@ static void check_ptrs_valid_heap_address() {
     while (GET_SIZE(HDRP(iter)) != 0) {
         if ((void *)HDRP(iter) < heap_lo || (void *)HDRP(iter) > heap_hi || (void *)FTRP(iter) < heap_lo || (void *)FTRP(iter) > heap_hi) {
             fprintf(stderr, "block at ptr %p is not fully within heap bounds\n", iter);
+            return -1;
         }
         iter = NEXT_BLKP(iter);
     }
+    return 0;
 }
 
 static int mm_check() {
-    free_list_blocks_marked_free();
-    contiguous_free_blocks_coalesced();
-    all_free_blocks_in_free_list();
-    check_ptrs_valid_heap_address();
+    if (free_list_blocks_marked_free() != 0) return -1;
+    if (contiguous_free_blocks_coalesced() != 0) return -1;
+    if (all_free_blocks_in_free_list() != 0) return -1;
+    if (check_ptrs_valid_heap_address() != 0) return -1;
     return 0;
 }
