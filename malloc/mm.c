@@ -59,6 +59,7 @@ static void *extend_heap(size_t words);
 static void *find_fit(size_t asize);
 static void place(void *bp, size_t asize);
 static void *coalesce(void *bp);
+static void expand_alloc_block_right(void *bp, size_t asize, size_t new_free_block_size);
 static void add_to_free_list(void *bp);
 static void remove_from_free_list(void *bp);
 static void print_free_list(void);
@@ -133,9 +134,10 @@ void *mm_realloc(void *ptr, size_t size) {
     size_t copy_size = MIN(size, bsize);
     size_t free_ptr = 0;
 
-    if (asize <= bsize) {
+    if (asize <= bsize) { // use existing block
         new_ptr = ptr;
         if (bsize - asize >= MIN_B_SIZE) {
+            // block has enough room to split
             PUT(HDRP(new_ptr), PACK(asize, 1));
             PUT(FTRP(new_ptr), PACK(asize, 1));
             void *new_free_block = NEXT_BLKP(new_ptr);
@@ -143,10 +145,12 @@ void *mm_realloc(void *ptr, size_t size) {
             PUT(FTRP(new_free_block), PACK(bsize - asize, 0));
             coalesce(new_free_block);
         } else {
+            // don't split; new size is close enough to old size; just return
             return new_ptr;
         }
-    } else if (!prev_alloc && asize <= prev_bsize + bsize) {
+    } else if (!prev_alloc && asize <= prev_bsize + bsize) { // expand existing block into previous block
         if (prev_bsize + bsize - asize >= MIN_B_SIZE) {
+            // shift the start of the allocated block to the left
             size_t new_size = prev_bsize + bsize - asize;
             PUT(HDRP(prev_block), PACK(new_size, 0));
             PUT(FTRP(prev_block), PACK(new_size, 0));
@@ -154,64 +158,37 @@ void *mm_realloc(void *ptr, size_t size) {
             PUT(HDRP(new_ptr), PACK(asize, 1));
             PUT(FTRP(new_ptr), PACK(asize, 1));
         } else {
+            // shift "all the way left" i.e. replacing the entire previous free block
             remove_from_free_list(prev_block);
             new_ptr = prev_block;
             PUT(HDRP(new_ptr), PACK(prev_bsize + bsize, 1));
             PUT(FTRP(new_ptr), PACK(prev_bsize + bsize, 1));
         }
-    } else if (!next_alloc && asize <= next_bsize + bsize) {
+    } else if (!next_alloc && asize <= next_bsize + bsize) { // expand existing block into next block
         new_ptr = ptr;
         if (next_bsize + bsize - asize >= MIN_B_SIZE) {
-            void *pred_block = PRED_BLKP(next_block);
-            void *succ_block = SUCC_BLKP(next_block);
-            PUT(HDRP(new_ptr), PACK(asize, 1));
-            PUT(FTRP(new_ptr), PACK(asize, 1));
-            void *new_free_block = NEXT_BLKP(new_ptr);
-            PUT(HDRP(new_free_block), PACK(next_bsize + bsize - asize, 0));
-            PUT(FTRP(new_free_block), PACK(next_bsize + bsize - asize, 0));
-            PUTP(PRED_P(new_free_block), pred_block);
-            PUTP(SUCC_P(new_free_block), succ_block);
-            if (succ_block) {
-                PUTP(PRED_P(succ_block), new_free_block);
-            }
-            if (pred_block) {
-                PUTP(SUCC_P(pred_block), new_free_block);
-            } else {
-                free_list_start = new_free_block;
-            }
+            // shift the end of the allocated block to the right
+            expand_alloc_block_right(new_ptr, asize, next_bsize + bsize - asize);
         } else {
+            // shift "all the way right" i.e. replacing the entire next free block
             remove_from_free_list(next_block);
             PUT(HDRP(new_ptr), PACK(next_bsize + bsize, 1));
             PUT(FTRP(new_ptr), PACK(next_bsize + bsize, 1));
         }
-    } else if (!prev_alloc && !next_alloc && asize <= prev_bsize + next_bsize + bsize) {
+    } else if (!prev_alloc && !next_alloc && asize <= prev_bsize + next_bsize + bsize) { // expand existing block into previous and next blocks
         new_ptr = prev_block;
         if (prev_bsize + next_bsize + bsize - asize >= MIN_B_SIZE) {
+            // move the beginning of the allocated block to the previous free block then shift the end of the allocated block right into the next free block
             remove_from_free_list(prev_block);
-            void *pred_block = PRED_BLKP(next_block);
-            void *succ_block = SUCC_BLKP(next_block);
-            PUT(HDRP(new_ptr), PACK(asize, 1));
-            PUT(FTRP(new_ptr), PACK(asize, 1));
-            void *new_free_block = NEXT_BLKP(new_ptr);
-            PUT(HDRP(new_free_block), PACK(next_bsize + prev_bsize + bsize - asize, 0));
-            PUT(FTRP(new_free_block), PACK(next_bsize + prev_bsize + bsize - asize, 0));
-            PUTP(PRED_P(new_free_block), pred_block);
-            PUTP(SUCC_P(new_free_block), succ_block);
-            if (succ_block) {
-                PUTP(PRED_P(succ_block), new_free_block);
-            }
-            if (pred_block) {
-                PUTP(SUCC_P(pred_block), new_free_block);
-            } else {
-                free_list_start = new_free_block;
-            }
+            expand_alloc_block_right(new_ptr, asize, next_bsize + bsize - asize);
         } else {
+            // use the entire 3 block space (prev free block, allocated block, next free block)
             remove_from_free_list(prev_block);
             remove_from_free_list(next_block);
             PUT(HDRP(new_ptr), PACK(prev_bsize + next_bsize + bsize, 1));
             PUT(FTRP(new_ptr), PACK(prev_bsize + next_bsize + bsize, 1));
         }
-    } else {
+    } else { // don't have enough space; use malloc to find a new block
         new_ptr = mm_malloc(size);
         free_ptr = 1;
     }
@@ -324,6 +301,26 @@ static void *coalesce(void *bp) {
     add_to_free_list(bp);
 
     return bp;
+}
+
+static void expand_alloc_block_right(void *bp, size_t asize, size_t new_free_block_size) {
+    void *pred_block = PRED_BLKP(NEXT_BLKP(bp));
+    void *succ_block = SUCC_BLKP(NEXT_BLKP(bp));
+    PUT(HDRP(bp), PACK(asize, 1));
+    PUT(FTRP(bp), PACK(asize, 1));
+    void *new_free_block = NEXT_BLKP(bp);
+    PUT(HDRP(new_free_block), PACK(new_free_block_size, 0));
+    PUT(FTRP(new_free_block), PACK(new_free_block_size, 0));
+    PUTP(PRED_P(new_free_block), pred_block);
+    PUTP(SUCC_P(new_free_block), succ_block);
+    if (succ_block) {
+        PUTP(PRED_P(succ_block), new_free_block);
+    }
+    if (pred_block) {
+        PUTP(SUCC_P(pred_block), new_free_block);
+    } else {
+        free_list_start = new_free_block;
+    }
 }
 
 static void add_to_free_list(void *bp) {
