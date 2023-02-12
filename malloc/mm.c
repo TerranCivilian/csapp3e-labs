@@ -23,6 +23,7 @@
 #define CHUNKSIZE (1<<12)
 
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
+#define MIN(x, y) ((x) < (y) ? (x) : (y))
 
 #define PACK(size, alloc) ((size) | (alloc))
 
@@ -242,19 +243,118 @@ void mm_free(void *bp) {
  * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
  */
 void *mm_realloc(void *ptr, size_t size) {
-    void *oldptr = ptr;
-    void *newptr;
-    size_t copySize;
-    
-    newptr = mm_malloc(size);
-    if (newptr == NULL)
-      return NULL;
-    copySize = GET_SIZE(HDRP(oldptr));
-    if (size < copySize)
-      copySize = size;
-    memcpy(newptr, oldptr, copySize);
-    mm_free(oldptr);
-    return newptr;
+    if (!ptr) {
+        return mm_malloc(size);
+    }
+    if (size == 0) {
+        mm_free(ptr);
+        return ptr;
+    }
+
+    void *new_ptr;
+    size_t asize = ALIGN(size + MIN_B_SIZE);
+    size_t bsize = GET_SIZE(HDRP(ptr));
+    void *prev_block = PREV_BLKP(ptr);
+    void *next_block = NEXT_BLKP(ptr);
+    size_t prev_bsize = GET_SIZE(HDRP(prev_block));
+    size_t next_bsize = GET_SIZE(HDRP(next_block));
+    size_t prev_alloc = GET_ALLOC(HDRP(prev_block));
+    size_t next_alloc = GET_ALLOC(HDRP(next_block));
+    size_t copy_size = MIN(size, bsize);
+    size_t free_ptr = 0;
+
+    if (asize <= bsize) {
+        new_ptr = ptr;
+        if (bsize - asize >= MIN_B_SIZE) {
+            PUT(HDRP(new_ptr), PACK(asize, 1));
+            PUT(FTRP(new_ptr), PACK(asize, 1));
+            void *new_free_block = NEXT_BLKP(new_ptr);
+            PUT(HDRP(new_free_block), PACK(bsize - asize, 0));
+            PUT(FTRP(new_free_block), PACK(bsize - asize, 0));
+            coalesce(new_free_block);
+        } else {
+            return new_ptr;
+        }
+    } else if (!prev_alloc && asize <= prev_bsize + bsize) {
+        if (prev_bsize + bsize - asize >= MIN_B_SIZE) {
+            size_t new_size = prev_bsize + bsize - asize;
+            PUT(HDRP(prev_block), PACK(new_size, 0));
+            PUT(FTRP(prev_block), PACK(new_size, 0));
+            new_ptr = NEXT_BLKP(prev_block);
+            PUT(HDRP(new_ptr), PACK(asize, 1));
+            PUT(FTRP(new_ptr), PACK(asize, 1));
+        } else {
+            remove_from_free_list(prev_block);
+            new_ptr = prev_block;
+            PUT(HDRP(new_ptr), PACK(prev_bsize + bsize, 1));
+            PUT(FTRP(new_ptr), PACK(prev_bsize + bsize, 1));
+        }
+    } else if (!next_alloc && asize <= next_bsize + bsize) {
+        new_ptr = ptr;
+        if (next_bsize + bsize - asize >= MIN_B_SIZE) {
+            void *pred_block = PRED_BLKP(next_block);
+            void *succ_block = SUCC_BLKP(next_block);
+            PUT(HDRP(new_ptr), PACK(asize, 1));
+            PUT(FTRP(new_ptr), PACK(asize, 1));
+            void *new_free_block = NEXT_BLKP(new_ptr);
+            PUT(HDRP(new_free_block), PACK(next_bsize + bsize - asize, 0));
+            PUT(FTRP(new_free_block), PACK(next_bsize + bsize - asize, 0));
+            PUTP(PRED_P(new_free_block), pred_block);
+            PUTP(SUCC_P(new_free_block), succ_block);
+            if (succ_block) {
+                PUTP(PRED_P(succ_block), new_free_block);
+            }
+            if (pred_block) {
+                PUTP(SUCC_P(pred_block), new_free_block);
+            } else {
+                free_list_start = new_free_block;
+            }
+        } else {
+            remove_from_free_list(next_block);
+            PUT(HDRP(new_ptr), PACK(next_bsize + bsize, 1));
+            PUT(FTRP(new_ptr), PACK(next_bsize + bsize, 1));
+        }
+    } else if (!prev_alloc && !next_alloc && asize <= prev_bsize + next_bsize + bsize) {
+        new_ptr = prev_block;
+        if (prev_bsize + next_bsize + bsize - asize >= MIN_B_SIZE) {
+            remove_from_free_list(prev_block);
+            void *pred_block = PRED_BLKP(next_block);
+            void *succ_block = SUCC_BLKP(next_block);
+            PUT(HDRP(new_ptr), PACK(asize, 1));
+            PUT(FTRP(new_ptr), PACK(asize, 1));
+            void *new_free_block = NEXT_BLKP(new_ptr);
+            PUT(HDRP(new_free_block), PACK(next_bsize + prev_bsize + bsize - asize, 0));
+            PUT(FTRP(new_free_block), PACK(next_bsize + prev_bsize + bsize - asize, 0));
+            PUTP(PRED_P(new_free_block), pred_block);
+            PUTP(SUCC_P(new_free_block), succ_block);
+            if (succ_block) {
+                PUTP(PRED_P(succ_block), new_free_block);
+            }
+            if (pred_block) {
+                PUTP(SUCC_P(pred_block), new_free_block);
+            } else {
+                free_list_start = new_free_block;
+            }
+        } else {
+            remove_from_free_list(prev_block);
+            remove_from_free_list(next_block);
+            PUT(HDRP(new_ptr), PACK(prev_bsize + next_bsize + bsize, 1));
+            PUT(FTRP(new_ptr), PACK(prev_bsize + next_bsize + bsize, 1));
+        }
+    } else {
+        new_ptr = mm_malloc(size);
+        free_ptr = 1;
+    }
+
+    if (new_ptr != ptr) {
+        memmove(new_ptr, ptr, copy_size);
+    }
+
+    if (free_ptr) {
+        mm_free(ptr);
+    }
+    mm_check();
+    return new_ptr;
 }
 
 void add_to_free_list(void *bp) {
